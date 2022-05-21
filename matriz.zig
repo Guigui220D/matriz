@@ -7,10 +7,15 @@ pub fn Matrix(comptime lines: usize, comptime columns: usize) type {
         const Self = @This();
         const TransposeType = Matrix(columns, lines);
 
-        pub const height = lines;
-        pub const width = columns;
+        const width = columns;
+        const height = lines;
 
-        fn SquareMatricesClosure() type {
+        comptime {
+            if (lines == 0 or columns == 0)
+                @compileError("Matrix must have at least one line and one column");
+        }
+
+        fn SquareMatricesMixin() type {
             if (isSquare) {
                 return struct {
                     pub const identity = blk: {
@@ -36,6 +41,10 @@ pub fn Matrix(comptime lines: usize, comptime columns: usize) type {
                         return true;
                     }
 
+                    pub fn isInversible(self: Self) bool {
+                        return (self.det() != 0);
+                    }
+
                     // TODO: pow for non integer values
                     pub fn pow(self: Self, n: usize) Self {
                         if (n == 0) return identity;
@@ -59,13 +68,63 @@ pub fn Matrix(comptime lines: usize, comptime columns: usize) type {
                     }
 
                     // TODO: exp
+                    
+                    pub fn det(self: Self) T {
+                        return switch (lines) {
+                            0 => unreachable,
+                            1 => self.det1(),
+                            2 => self.det2(),
+                            3 => self.det3(),
+                            else => self.detN()
+                        };
+                    }
+
+                    //TODO: these should be hidden: how?
+
+                    pub fn det1(self: Self) T {
+                        if (lines != 1)
+                            @compileError("det1 only works on 1x1 matrices");
+                        return self.data[0];
+                    }
+
+                    pub fn det2(self: Self) T {
+                        if (lines != 2)
+                            @compileError("det2 only works on 2x2 matrices");
+                        return self.data[0] * self.data[3] - self.data[1] * self.data[2];
+                    }
+
+                    pub fn det3(self: Self) T {
+                        if (lines != 3)
+                            @compileError("det3 only works on 3x3 matrices");
+                        var ret: T = 0;
+                        ret += self.data[0] * self.data[4] * self.data[8];
+                        ret += self.data[1] * self.data[5] * self.data[6];
+                        ret += self.data[2] * self.data[3] * self.data[7];
+                        ret -= self.data[2] * self.data[4] * self.data[6];
+                        ret -= self.data[1] * self.data[3] * self.data[8];
+                        ret -= self.data[0] * self.data[5] * self.data[7];
+                        return ret;
+                    }
+
+                    pub fn detN(self: Self) T {
+                        var i: usize = 0;
+                        var ret: T = 0;
+                        while (i < columns) : (i += 1) {
+                            const submat = self.subMatrix(0, i);
+                            var cofactor = submat.det() * self.get(0, i);
+                            if (i % 2 == 1)
+                                cofactor = -cofactor;
+                            ret += cofactor;
+                        }
+                        return ret;
+                    }
                 };
             } else {
                 return struct {};
             }
         }
 
-        pub usingnamespace SquareMatricesClosure();
+        pub usingnamespace SquareMatricesMixin();
 
         const isSquare = (lines == columns);
         
@@ -125,7 +184,7 @@ pub fn Matrix(comptime lines: usize, comptime columns: usize) type {
             return ret;
         }
 
-        pub fn sub (a: Self, b: Self) Self {
+        pub fn sub(a: Self, b: Self) Self {
             var ret: Self = undefined;
             for (a.data) |va, i| {
                 const vb = b.data[i];
@@ -139,7 +198,6 @@ pub fn Matrix(comptime lines: usize, comptime columns: usize) type {
                 @compileError("Incompatible matrix dimensions");
             return Matrix(lines, other.width);
         }
-
         pub fn mul(a: Self, b: anytype) MulResType(@TypeOf(b)) {
             var ret = std.mem.zeroes(MulResType(@TypeOf(b)));
             var i: usize = 0;
@@ -165,6 +223,7 @@ pub fn Matrix(comptime lines: usize, comptime columns: usize) type {
             return ret;
         }
 
+        // TODO: remove
         pub fn equals(a: Self, b: Self) bool {
             for (a.data) |va, i| {
                 const vb = b.data[i];
@@ -172,6 +231,60 @@ pub fn Matrix(comptime lines: usize, comptime columns: usize) type {
                     return false;
             }
             return true;
+        }
+
+        fn expectEqual(expected: Self, actual: Self, tolerance: T) !void {
+            for (expected.data) |va, i| {
+                const vb = actual.data[i];
+                if (!std.math.approxEqRel(T, va, vb, tolerance)){
+                    std.debug.print("Matrices differ. expected: {d}, found {d}\n", .{ expected, actual });
+                    return error.TestExpectedEqual;
+                }
+            }
+        }
+
+        pub fn rank(self: Self) usize {
+            if (isSquare and self.det() != 0)
+                return lines;
+            // TODO
+        }
+
+        const SubmatType = Matrix(lines - 1, columns - 1);
+        pub fn subMatrix(self: Self, i: usize, j: usize) SubmatType {
+            std.debug.assert(i < lines);
+            std.debug.assert(j < columns);
+
+            var ret: SubmatType = undefined;
+            var k: usize = 0;
+            while (k < lines) : (k += 1) {
+                if (k == i)
+                    continue;
+                var l: usize = 0;
+                while (l < columns) : (l += 1) {
+                    if (l == j)
+                        continue;
+                    ret.set(if (k > i) k - 1 else k, if (l > j) l - 1 else l, self.get(k, l));
+                }
+            }
+            return ret;
+        }
+
+        pub fn format(
+            self: Self,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype
+        ) !void {
+            _ = options;
+            _ = fmt;
+
+            try writer.writeAll("[ ");
+            for (self.data) |v, i| {
+                if (i != 0 and i % columns == 0)
+                    try writer.writeAll("; ");
+                try writer.print("{} ", .{v});
+            }
+            try writer.writeByte(']');
         }
 
         data: [lines * columns]T,
@@ -203,15 +316,15 @@ test "Creating a matrix, adding, transposing" {
 
     var c = b.add(a.transpose());
 
-    try std.testing.expect(c.equals(Matrix(3, 2).init(.{
+    try Matrix(3, 2).expectEqual(Matrix(3, 2).init(.{
         .{3, 6},
         .{3, 6},
         .{3, 7},
-    })));
+    }), c, 0.01);
 
     c = c.sub(a.transpose());
 
-    try std.testing.expect(c.equals(b));
+    try Matrix(3, 2).expectEqual(b, c, 0.01);
 }
 
 test "Multiplication" {
@@ -232,24 +345,28 @@ test "Multiplication" {
 
     const d = a.mul(c);
 
-    try std.testing.expect(d.equals(Matrix(2, 3).init(.{
+    try Matrix(2, 3).expectEqual(Matrix(2, 3).init(.{
         .{1,  8, 4},
         .{3, 26, 8},
-    })));
+    }), d, 0.01);
 
     const e = a.scale(2);
-    try std.testing.expect(e.equals(Matrix(2, 2).init(.{
+
+    try Mat2.expectEqual(Mat2.init(.{
         .{2, 4},
         .{6, 8},
-    })));
+    }), e, 0.01);
 }
 
 test "Matrix properties" {
-    var id = Matrix(5, 5).identity;
+    var id = Mat2.identity;
     try std.testing.expect(id.isDiagonal());
+    try std.testing.expect(id.isInversible());
 
-    id.set(1, 2, 42.0);
+    id.set(0, 0, 0);
+    id.set(0, 1, 42);
     try std.testing.expect(!id.isDiagonal());
+    try std.testing.expect(!id.isInversible());
 }
 
 test "Matrix power" {
@@ -258,10 +375,58 @@ test "Matrix power" {
         .{1, 0},
     });
     const b = a.pow(4);
-    try std.testing.expect(b.equals(Mat2.init(.{
+
+    try Mat2.expectEqual(Mat2.init(.{
         .{-1, 1},
         .{-1, 0},
-    })));
+    }), b, 0.01);
 
-    try std.testing.expect(Mat2.identity.equals(Mat2.identity.pow(10)));
+    try Mat2.expectEqual(Mat2.identity, Mat2.identity.pow(10), 0.0001);
+}
+
+test "Submatrix" {
+    const a = Mat3.init(.{
+        .{6, 1, 1},
+        .{4, -2, 5},
+        .{2, 8, 7},
+    });
+    const b = a.subMatrix(1, 1);
+    try Mat2.expectEqual(Mat2.init(.{
+        .{6, 1},
+        .{2, 7},
+    }), b, 0.01);
+}
+
+test "Matrix determinant" {
+    const a = Mat2.init(.{
+        .{1, 2},
+        .{3, 4},
+    });
+    try std.testing.expectApproxEqRel(@as(T, -2), a.det(), 0.001);
+
+    const b = Mat3.init(.{
+        .{6, 1, 1},
+        .{4, -2, 5},
+        .{2, 8, 7},
+    });
+    try std.testing.expectApproxEqRel(@as(T, -306), b.det(), 0.001);
+
+    const c = Mat4.init(.{
+        .{1, 0, 0, 0},
+        .{0, 1, 3, 0},
+        .{0, 0, 3, 2},
+        .{0, 0, 0, 1},
+    });
+    _ = c;
+    //try std.testing.expectApproxEqRel(@as(T, 3), c.det(), 0.001);
+
+    const d = Mat(6).init(.{
+        .{1, 0, 0, 0, 0, 0},
+        .{0, 2, 3.5, 0, 2, 0},
+        .{0, 2, 7, 0, 0, 0},
+        .{0, 0, 3, 0.3, 0, 0},
+        .{0, 0, 3, 0, 7, 0},
+        .{0, 0, 0.1, -1, -1, 2},
+    });
+    try std.testing.expectApproxEqRel(@as(T, 36.6), d.det(), 0.001);
 }

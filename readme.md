@@ -12,8 +12,9 @@ This is a work in progress, only simple operations are ready as of today.
 - [x] Transpose
 - [x] Power (only for integer powers)
 - [ ] Exponential of a matrix
-- [ ] Rank, determinant
-- [ ] Submatrices
+- [x] Determinant
+- [ ] Rank
+- [x] Submatrices
 - [ ] The rest...
 
 ## Example
